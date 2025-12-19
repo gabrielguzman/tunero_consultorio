@@ -3,92 +3,116 @@
 namespace App\Livewire;
 
 use Livewire\Component;
+use Livewire\Attributes\Layout;
 use App\Models\Appointment;
 use App\Models\Patient;
 use App\Models\AppointmentType;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Auth;
 
+#[Layout('layouts.app')]
 class Calendar extends Component
 {
-    // Variables para el Calendario
-    public $events = [];
-
-    // Variables para el Modal y Formulario
-    public $isModalOpen = false;
-    public $newDate;
-    public $newTime;
-    
-    // Campos del formulario
-    public $patient_id;
-    public $type_id;
-    public $notes;
-
-    // Listas para los desplegables
+    public $events = []; // Lo pasaremos como Array, no como JSON string
     public $patients;
     public $types;
 
+    // Modales
+    public $isCreateModalOpen = false;
+    public $isEditModalOpen = false;
+
+    // Formulario
+    public $selectedAppointmentId = null;
+    public $newDate;
+    public $newTime;
+    public $patient_id;
+    public $type_id;
+    public $notes;
+    public $doctor_notes;
+    public $status;
+
     public function mount()
     {
-        // Cargamos listas una sola vez al iniciar
         $this->patients = Patient::all();
         $this->types = AppointmentType::active()->get();
     }
 
     public function render()
-{
-    $this->loadEvents(); // Cargar eventos actualizados
-    
-    // CAMBIO: Pasamos 'events' explícitamente a la vista
-    return view('livewire.calendar', [
-        'events' => $this->events
-    ]);
-}
+    {
+        $this->loadEvents();
+        return view('livewire.calendar');
+    }
 
     public function loadEvents()
     {
         $appointments = Appointment::with(['patient', 'type'])->get();
 
+        // Transformamos a Array (no JSON string todavía)
         $this->events = $appointments->map(function ($app) {
+            
+            // BLINDAJE: Si el paciente o el tipo se borró, saltamos este turno para no romper el calendario
+            if (!$app->patient || !$app->type) {
+                return null;
+            }
+
+            // Colores
+            $color = match($app->status) {
+                'completed' => '#9CA3AF', // Gris
+                'cancelled' => '#EF4444', // Rojo
+                'scheduled' => $app->type->color ?? '#3B82F6',
+                default => '#3B82F6'
+            };
+
             return [
                 'id' => $app->id,
-                'title' => $app->patient->name . ' (' . $app->type->name . ')',
+                'title' => $app->patient->name,
                 'start' => $app->start_time->toIso8601String(),
                 'end'   => $app->end_time->toIso8601String(),
-                'color' => $app->type->color,
+                'backgroundColor' => $color,
+                'borderColor' => $color,
                 'extendedProps' => [
-                    'notes' => $app->doctor_notes
+                    'status' => $app->status,
+                    'notes' => $app->patient_notes
                 ]
             ];
-        })->toJson();
+        })
+        ->filter() // Elimina los nulos (datos rotos)
+        ->values() // Reordena índices
+        ->toArray(); // Devolvemos array puro
     }
 
-    // --- FUNCIONES DEL MODAL ---
+    // --- FUNCIONES DEL CALENDARIO ---
 
-    // Esta función la llama JS cuando haces clic en una fecha
-    public function openModal($dateStr)
+    public function openCreateModal($dateStr)
     {
+        $this->resetForm();
         $date = Carbon::parse($dateStr);
-        
         $this->newDate = $date->format('Y-m-d');
         $this->newTime = $date->format('H:i');
-        
-        // Valores por defecto
-        $this->type_id = $this->types->first()->id ?? null;
-        $this->patient_id = $this->patients->first()->id ?? null;
-        
-        $this->isModalOpen = true;
+        $this->isCreateModalOpen = true;
     }
 
-    public function closeModal()
+    public function openEditModal($id)
     {
-        $this->isModalOpen = false;
-        $this->reset(['notes']);
+        $this->resetForm();
+        $app = Appointment::find($id);
+        
+        if (!$app) return;
+
+        $this->selectedAppointmentId = $app->id;
+        $this->patient_id = $app->patient_id;
+        $this->type_id = $app->appointment_type_id;
+        $this->newDate = $app->start_time->format('Y-m-d');
+        $this->newTime = $app->start_time->format('H:i');
+        $this->notes = $app->patient_notes;
+        $this->doctor_notes = $app->doctor_notes;
+        $this->status = $app->status;
+
+        $this->isEditModalOpen = true;
     }
 
-    public function saveAppointment()
+    public function saveNew()
     {
-        // 1. Validar datos básicos
         $this->validate([
             'patient_id' => 'required',
             'type_id' => 'required',
@@ -96,30 +120,64 @@ class Calendar extends Component
             'newTime' => 'required',
         ]);
 
-        // 2. Calcular fecha inicio y fin
-        $start = Carbon::createFromFormat('Y-m-d H:i', $this->newDate . ' ' . $this->newTime);
-        
-        // Buscamos la duración del tipo de turno seleccionado
+        $start = Carbon::parse($this->newDate . ' ' . $this->newTime);
         $type = AppointmentType::find($this->type_id);
         $end = $start->copy()->addMinutes($type->duration_minutes);
+        $patient = Patient::find($this->patient_id);
 
-        // 3. Guardar (Aquí es donde tu hermana "Admin" ignora validaciones de horario)
         Appointment::create([
-            'user_id' => Patient::find($this->patient_id)->user_id, // El padre del paciente
+            'user_id' => $patient->user_id,
             'patient_id' => $this->patient_id,
             'appointment_type_id' => $this->type_id,
             'start_time' => $start,
             'end_time' => $end,
-            'status' => 'scheduled', // Confirmado por defecto si lo hace ella
+            'status' => 'scheduled',
             'doctor_notes' => $this->notes,
             'created_by' => Auth::id(),
-            'is_overtime' => true, // Asumimos flexibilidad total para ella
+            'is_overtime' => true,
         ]);
 
-        // 4. Cerrar y avisar al frontend
-        $this->closeModal();
+        $this->closeModals();
+        $this->dispatch('refresh-calendar'); 
+    }
+
+    public function saveEdit()
+    {
+        $app = Appointment::find($this->selectedAppointmentId);
         
-        // Despachamos evento para recargar calendario sin F5
-        $this->dispatch('appointment-saved'); 
+        $start = Carbon::parse($this->newDate . ' ' . $this->newTime);
+        if ($start->ne($app->start_time)) {
+             $end = $start->copy()->addMinutes($app->type->duration_minutes);
+             $app->start_time = $start;
+             $app->end_time = $end;
+        }
+
+        $app->doctor_notes = $this->doctor_notes;
+        $app->status = $this->status;
+        $app->save();
+
+        $this->closeModals();
+        $this->dispatch('refresh-calendar');
+    }
+
+    public function deleteAppointment()
+    {
+        if ($this->selectedAppointmentId) {
+            Appointment::destroy($this->selectedAppointmentId);
+        }
+        $this->closeModals();
+        $this->dispatch('refresh-calendar');
+    }
+
+    public function closeModals()
+    {
+        $this->isCreateModalOpen = false;
+        $this->isEditModalOpen = false;
+    }
+
+    public function resetForm()
+    {
+        $this->reset(['newDate', 'newTime', 'patient_id', 'type_id', 'notes', 'doctor_notes', 'selectedAppointmentId', 'status']);
+        $this->type_id = $this->types->first()->id ?? null;
     }
 }

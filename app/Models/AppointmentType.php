@@ -9,7 +9,7 @@ class AppointmentType extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['name', 'duration_minutes', 'price', 'color', 'is_active'];
+    protected $fillable = ['name', 'duration_minutes', 'price', 'color', 'active'];
 
     public function scopeActive($query)
     {
