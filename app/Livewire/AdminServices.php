@@ -3,65 +3,47 @@
 namespace App\Livewire;
 
 use Livewire\Component;
-use Livewire\Attributes\Layout;
 use App\Models\AppointmentType;
-use App\Models\HealthInsurance;
+use App\Models\HealthInsurance; // <--- FALTABA ESTO
+use Livewire\Attributes\Layout;
 
 #[Layout('layouts.app')]
 class AdminServices extends Component
 {
-    // Colecciones
-    public $types;
-    public $insurances;
-
-    // --- FORMULARIO SERVICIOS (Tipos de Turno) ---
-    public $type_id;
-    public $type_name;
-    public $type_duration = 30; // Default
-    public $type_price = 0;
-    public $type_color = '#3B82F6'; // Azul por defecto
-
-    // --- FORMULARIO OBRAS SOCIALES ---
-    public $insurance_id;
-    public $insurance_name;
-
-    // Modales
+    // --- VARIABLES PARA SERVICIOS (Tipos de Turno) ---
+    public $type_id, $type_name, $type_price, $type_duration, $type_color;
     public $modalTypeOpen = false;
+
+    // --- VARIABLES PARA OBRAS SOCIALES ---
+    public $insurance_id, $insurance_name;
     public $modalInsuranceOpen = false;
 
-    public function mount()
-    {
-        $this->loadData();
-    }
-
-    public function loadData()
-    {
-        $this->types = AppointmentType::orderBy('name')->get();
-        $this->insurances = HealthInsurance::orderBy('name')->get();
-    }
-
+    // --- RENDERIZADO (Aquí enviamos ambas listas a la vista) ---
     public function render()
     {
-        return view('livewire.admin-services');
+        return view('livewire.admin-services', [
+            'types' => AppointmentType::orderBy('name')->get(),
+            'insurances' => HealthInsurance::orderBy('name')->get(), // <--- ESTO FALTABA
+        ]);
     }
 
     // ==========================================
-    // LÓGICA DE TIPOS DE TURNO (SERVICIOS)
+    // LÓGICA DE SERVICIOS (Tipos de Turno)
     // ==========================================
 
     public function createType()
     {
-        $this->resetTypeForm();
+        $this->resetTypeFields();
         $this->modalTypeOpen = true;
     }
 
     public function editType($id)
     {
-        $type = AppointmentType::find($id);
-        $this->type_id = $type->id;
+        $type = AppointmentType::findOrFail($id);
+        $this->type_id = $id;
         $this->type_name = $type->name;
-        $this->type_duration = $type->duration_minutes;
         $this->type_price = $type->price;
+        $this->type_duration = $type->duration_minutes;
         $this->type_color = $type->color;
         $this->modalTypeOpen = true;
     }
@@ -70,32 +52,49 @@ class AdminServices extends Component
     {
         $this->validate([
             'type_name' => 'required|min:3',
-            'type_duration' => 'required|integer|min:5|max:120',
-            'type_price' => 'required|numeric|min:0',
+            'type_price' => 'required|numeric',
+            'type_duration' => 'required|integer|min:5',
             'type_color' => 'required',
         ]);
 
-        AppointmentType::updateOrCreate(
-            ['id' => $this->type_id],
-            [
-                'name' => $this->type_name,
-                'duration_minutes' => $this->type_duration,
-                'price' => $this->type_price,
-                'color' => $this->type_color,
-                'active' => true
-            ]
-        );
+        AppointmentType::updateOrCreate(['id' => $this->type_id], [
+            'name' => $this->type_name,
+            'price' => $this->type_price,
+            'duration_minutes' => $this->type_duration,
+            'color' => $this->type_color,
+            'active' => $this->type_id ? AppointmentType::find($this->type_id)->active : true
+        ]);
 
-        session()->flash('message', 'Servicio guardado correctamente.');
         $this->closeModals();
-        $this->loadData();
+        session()->flash('message', 'Servicio guardado correctamente.');
+    }
+
+    public function toggleStatus($id)
+    {
+        $type = AppointmentType::find($id);
+        if ($type) {
+            $type->active = !$type->active;
+            $type->save();
+        }
     }
 
     public function deleteType($id)
     {
-        // Opcional: Verificar si tiene turnos asociados antes de borrar
-        AppointmentType::destroy($id);
-        $this->loadData();
+        try {
+            AppointmentType::find($id)?->delete();
+            session()->flash('message', 'Servicio eliminado.');
+        } catch (\Exception $e) {
+            session()->flash('message', 'No se puede eliminar porque tiene turnos asociados. Úsalo como inactivo.');
+        }
+    }
+
+    public function resetTypeFields()
+    {
+        $this->type_id = null;
+        $this->type_name = '';
+        $this->type_price = '';
+        $this->type_duration = 30;
+        $this->type_color = '#3B82F6';
     }
 
     // ==========================================
@@ -104,36 +103,46 @@ class AdminServices extends Component
 
     public function createInsurance()
     {
-        $this->resetInsuranceForm();
+        $this->resetInsuranceFields();
         $this->modalInsuranceOpen = true;
     }
 
     public function editInsurance($id)
     {
-        $ins = HealthInsurance::find($id);
-        $this->insurance_id = $ins->id;
+        $ins = HealthInsurance::findOrFail($id);
+        $this->insurance_id = $id;
         $this->insurance_name = $ins->name;
         $this->modalInsuranceOpen = true;
     }
 
     public function saveInsurance()
     {
-        $this->validate(['insurance_name' => 'required|min:2']);
+        $this->validate([
+            'insurance_name' => 'required|min:2|unique:health_insurances,name,' . $this->insurance_id,
+        ]);
 
-        HealthInsurance::updateOrCreate(
-            ['id' => $this->insurance_id],
-            ['name' => $this->insurance_name]
-        );
+        HealthInsurance::updateOrCreate(['id' => $this->insurance_id], [
+            'name' => $this->insurance_name
+        ]);
 
-        session()->flash('message', 'Obra Social guardada.');
         $this->closeModals();
-        $this->loadData();
+        session()->flash('message', 'Obra Social guardada.');
     }
 
     public function deleteInsurance($id)
     {
-        HealthInsurance::destroy($id);
-        $this->loadData();
+        try {
+            HealthInsurance::find($id)?->delete();
+            session()->flash('message', 'Obra Social eliminada.');
+        } catch (\Exception $e) {
+            session()->flash('message', 'No se puede eliminar porque hay pacientes con esta Obra Social.');
+        }
+    }
+
+    public function resetInsuranceFields()
+    {
+        $this->insurance_id = null;
+        $this->insurance_name = '';
     }
 
     // ==========================================
@@ -144,16 +153,7 @@ class AdminServices extends Component
     {
         $this->modalTypeOpen = false;
         $this->modalInsuranceOpen = false;
-    }
-
-    public function resetTypeForm()
-    {
-        $this->reset(['type_id', 'type_name', 'type_duration', 'type_price', 'type_color']);
-        $this->type_color = '#3B82F6';
-    }
-
-    public function resetInsuranceForm()
-    {
-        $this->reset(['insurance_id', 'insurance_name']);
+        $this->resetTypeFields();
+        $this->resetInsuranceFields();
     }
 }

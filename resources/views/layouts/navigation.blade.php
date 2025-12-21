@@ -41,7 +41,7 @@
                             {{ __('Mis Hijos') }}
                         </x-nav-link>
 
-                        <x-nav-link :href="route('patient.booking')" :active="request()->routeIs('patient.booking')">
+                        <x-nav-link :href="route('guest.booking')" :active="request()->routeIs('guest.booking')">
                             {{ __('Reservar Turno') }}
                         </x-nav-link>
 
@@ -133,9 +133,9 @@
                     {{ __('Mis Hijos') }}
                 </x-responsive-nav-link>
 
-                <x-responsive-nav-link :href="route('patient.booking')" :active="request()->routeIs('patient.booking')">
-                    {{ __('Reservar Turno') }}
-                </x-responsive-nav-link>
+                <x-nav-link href="{{ route('guest.booking') }}" :active="request()->routeIs('guest.booking')">
+    {{ __('Reservar Turno') }}
+</x-nav-link>
 
                 <x-responsive-nav-link :href="route('patient.appointments')" :active="request()->routeIs('patient.appointments')">
                     {{ __('Mis Turnos') }}

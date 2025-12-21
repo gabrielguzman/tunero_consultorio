@@ -9,59 +9,93 @@ use App\Models\Appointment;
 use App\Models\User;
 use App\Models\Patient;
 use App\Models\HealthInsurance;
+use App\Models\BusinessSetting; 
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Auth;
 
 #[Layout('layouts.booking')]
 class GuestBooking extends Component
 {
-    // Pasos del Wizard
+    // --- VARIABLES DE ESTADO ---
     public $step = 1;
 
-    // Colecciones para los selectores
+    // --- COLECCIONES ---
     public $types;
     public $insurances;
+    public $existingPatients = []; // Lista de hijos del usuario logueado
 
-    // Selección de Turno
+    // --- SELECCIÓN DE TURNO ---
     public $type_id;
     public $selectedDate;
     public $selectedTime;
     public $availableSlots = [];
 
-    // Datos del PADRE/MADRE (Usuario)
+    // --- DATOS DEL RESPONSABLE (Padre/Madre) ---
     public $parent_name = '';
     public $parent_dni = '';
     public $parent_email = '';
     public $parent_phone = '';
 
-    // Datos del HIJO/A (Paciente)
+    // --- DATOS DEL PACIENTE (Hijo/a) ---
+    public $selected_patient_id = 'new'; // 'new' o ID del paciente
     public $child_name = '';
     public $child_dob = '';
     public $child_insurance_id = '';
-    public $child_affiliate = ''; // <--- ESTA ERA LA VARIABLE QUE FALTABA
+    public $child_affiliate = '';
 
     public function mount()
     {
-        // Cargar datos iniciales (solo activos)
+        // 1. Cargar datos básicos
         $this->types = AppointmentType::where('active', true)->get();
         $this->insurances = HealthInsurance::orderBy('name')->get();
-
-        // Configurar fecha por defecto (hoy)
         $this->selectedDate = Carbon::today()->format('Y-m-d');
+
+        // 2. Si está logueado, precargar datos del Padre y sus Hijos
+        if (Auth::check()) {
+            $user = Auth::user();
+            
+            // Datos del Padre
+            $this->parent_name = $user->name;
+            $this->parent_email = $user->email;
+            $this->parent_phone = $user->phone;
+            // $this->parent_dni = $user->dni; // Descomentar si tu User tiene columna dni
+            
+            // Cargar Hijos existentes
+            $this->existingPatients = Patient::where('user_id', $user->id)->get();
+        }
     }
 
-    // Detectar cambios para recalcular horarios
-    public function updatedSelectedDate()
+    // --- LISTENERS DE CAMBIO ---
+
+    // Cuando cambia la fecha o el tipo, recalculamos horarios
+    public function updatedSelectedDate() { $this->calculateSlots(); }
+    public function updatedTypeId() { $this->calculateSlots(); }
+
+    // Cuando selecciona un hijo de la lista (o elige 'Nuevo')
+    public function updatedSelectedPatientId($value)
     {
-        $this->calculateSlots();
-    }
-    public function updatedTypeId()
-    {
-        $this->calculateSlots();
+        if ($value === 'new') {
+            // Limpiar para cargar uno nuevo
+            $this->child_name = '';
+            $this->child_dob = '';
+            $this->child_insurance_id = '';
+            $this->child_affiliate = '';
+        } else {
+            // Buscar al hijo y autocompletar
+            $patient = $this->existingPatients->firstWhere('id', $value);
+            if ($patient) {
+                $this->child_name = $patient->name;
+                $this->child_dob = $patient->birth_date;
+                $this->child_insurance_id = $patient->health_insurance_id;
+                $this->child_affiliate = $patient->affiliate_number;
+            }
+        }
     }
 
+    // --- LÓGICA DE HORARIOS ---
     public function calculateSlots()
     {
         $this->availableSlots = [];
@@ -69,18 +103,21 @@ class GuestBooking extends Component
 
         if (!$this->type_id || !$this->selectedDate) return;
 
-        $startHour = 9;
-        $endHour = 17;
+        // Leer configuración del negocio (Horarios)
+        $settings = BusinessSetting::first();
+        $startHour = $settings ? $settings->start_hour : 9;
+        $endHour = $settings ? $settings->end_hour : 17;
+        $workWeekends = $settings ? $settings->work_weekends : false;
 
         $type = AppointmentType::find($this->type_id);
         if (!$type) return;
 
-        $duration = $type->duration_minutes;
         $date = Carbon::parse($this->selectedDate);
 
-        if ($date->isWeekend()) return;
+        // Validar fin de semana
+        if (!$workWeekends && $date->isWeekend()) return;
 
-        // Buscar turnos ocupados
+        // Turnos ya ocupados en la BD
         $booked = Appointment::whereDate('start_time', $date)
             ->where('status', '!=', 'cancelled')
             ->get()
@@ -89,14 +126,15 @@ class GuestBooking extends Component
             })
             ->toArray();
 
-        // Generar slots
+        // Generar grilla
         $current = $date->copy()->setHour($startHour)->setMinute(0);
         $end = $date->copy()->setHour($endHour)->setMinute(0);
+        $duration = $type->duration_minutes;
 
         while ($current->lt($end)) {
             $timeStr = $current->format('H:i');
 
-            // Si es hoy, no mostrar horas pasadas
+            // No mostrar horarios pasados si es hoy
             if ($date->isToday() && $current->lt(now())) {
                 $current->addMinutes($duration);
                 continue;
@@ -112,7 +150,7 @@ class GuestBooking extends Component
     public function selectSlot($time)
     {
         $this->selectedTime = $time;
-        $this->step = 2; // Pasar a datos personales
+        $this->step = 2;
     }
 
     public function back()
@@ -121,113 +159,124 @@ class GuestBooking extends Component
         $this->calculateSlots();
     }
 
-    // --- FUNCIÓN PARA AGENDAR OTRO FAMILIAR ---
+    // --- AGENDAR OTRO HERMANO (VIA RÁPIDA) ---
     public function bookNewAppointmentForFamily()
     {
-        // 1. Calcular el horario consecutivo ideal ANTES de borrar los datos
         $type = AppointmentType::find($this->type_id);
         $previousTime = Carbon::parse($this->selectedDate . ' ' . $this->selectedTime);
         $idealNextSlot = $previousTime->copy()->addMinutes($type->duration_minutes)->format('H:i');
 
-        // 2. Limpiar datos del hijo (para cargar el nuevo)
+        // Resetear datos del niño a "Nuevo"
+        $this->selected_patient_id = 'new';
         $this->child_name = '';
         $this->child_dob = '';
         $this->child_insurance_id = '';
         $this->child_affiliate = '';
 
-        // 3. Recalcular disponibilidad REAL de la base de datos AHORA MISMO
-        // (Esto verifica si alguien tomó el turno hace 1 segundo)
         $this->calculateSlots();
 
-        // 4. LÓGICA DE CONTINUIDAD
         if (in_array($idealNextSlot, $this->availableSlots)) {
-            // A) ¡ÉXITO! El turno consecutivo está libre.
-            $this->selectedTime = $idealNextSlot; // Lo seleccionamos solo
-            $this->step = 2; // Saltamos directo al formulario de datos (Vía Rápida)
-
-            // Opcional: Mensaje para avisarle
-            session()->flash('auto_msg', "Para tu comodidad, seleccionamos automáticamente el turno consecutivo de las {$idealNextSlot} hs.");
+            $this->selectedTime = $idealNextSlot;
+            $this->step = 2;
+            session()->flash('auto_msg', "Turno consecutivo ({$idealNextSlot} hs) seleccionado automáticamente.");
         } else {
-            // B) MALA SUERTE. Alguien lo ocupó o es el fin del día.
             $this->selectedTime = null;
-            $this->step = 1; // Volvemos al calendario para que elija otro
+            $this->step = 1;
         }
     }
 
+    // --- CONFIRMAR Y GUARDAR ---
     public function confirmBooking()
     {
+        // 1. Rate Limiter (Anti-Spam)
         $key = 'booking:' . request()->ip();
-
-        // Si intentó más de 3 veces en 1 minuto...
         if (RateLimiter::tooManyAttempts($key, 3)) {
-            $seconds = RateLimiter::availableIn($key);
-            $this->addError('generic', "Demasiados intentos. Por favor espera $seconds segundos.");
+            $this->addError('generic', "Demasiados intentos. Espera unos segundos.");
             return;
         }
+        RateLimiter::hit($key, 60);
 
-        RateLimiter::hit($key, 60); // 60 segundos de memoria
-
-        // 1. LIMPIEZA PREVIA (Sanitization)
-        // Quitamos puntos, guiones y espacios del DNI y Teléfono antes de validar
+        // 2. Limpieza de inputs
         $this->parent_dni = preg_replace('/[^0-9]/', '', $this->parent_dni);
         $this->parent_phone = preg_replace('/[^0-9]/', '', $this->parent_phone);
 
-        // 2. VALIDACIÓN (Ahora sí pasará si pusiste puntos)
+        // 3. Validación
         $this->validate([
             'parent_name' => 'required|string|min:3',
             'parent_dni' => 'required|numeric|digits_between:7,8',
             'parent_email' => 'required|email',
-            'parent_phone' => 'required|numeric|min_digits:8', // min_digits es mejor que string
+            'parent_phone' => 'required|numeric|min_digits:8',
             'child_name' => 'required|string|min:3',
             'child_dob' => 'required|date|before:today',
         ]);
 
-        // --- BLOQUEO DE SEGURIDAD (ANTI-DOBLE RESERVA) ---
+        // 4. Anti-Doble Reserva (Concurrency Check)
         $checkDate = Carbon::parse($this->selectedDate . ' ' . $this->selectedTime);
-
         $isTaken = Appointment::where('start_time', $checkDate)
             ->where('status', '!=', 'cancelled')
             ->exists();
 
         if ($isTaken) {
-            // Ups, alguien ganó de mano.
-            $this->addError('selectedTime', '¡Lo sentimos! Alguien acaba de reservar este horario hace un instante.');
-            $this->step = 1; // Lo mandamos de vuelta al calendario
-            $this->calculateSlots(); // Actualizamos la grilla
-            return; // DETENEMOS TODO
+            $this->addError('selectedTime', 'Este horario acaba de ser ocupado.');
+            $this->step = 1;
+            $this->calculateSlots();
+            return;
         }
 
-        // 3. LOGICA DE GUARDADO (IGUAL QUE ANTES)
-        $user = User::where('email', $this->parent_email)->first();
-
-        if (!$user) {
-            $user = User::create([
-                'name' => $this->parent_name,
-                'email' => $this->parent_email,
-                'phone' => $this->parent_phone,
-                'password' => Hash::make(Str::random(10)),
-                'role' => 'patient',
-            ]);
+        // 5. GESTIÓN DE USUARIO (Padre/Madre)
+        $user = null;
+        if (Auth::check()) {
+            $user = Auth::user();
+            // Actualizar teléfono si cambió
+            if ($user->phone !== $this->parent_phone) {
+                $user->update(['phone' => $this->parent_phone]);
+            }
         } else {
-            // Actualizamos teléfono si no tenía
-            if (!$user->phone) $user->update(['phone' => $this->parent_phone]);
+            // Buscar por email o Crear
+            $user = User::firstOrCreate(
+                ['email' => $this->parent_email],
+                [
+                    'name' => $this->parent_name,
+                    'phone' => $this->parent_phone,
+                    'password' => Hash::make(Str::random(10)), // Password temporal
+                    'role' => 'patient',
+                ]
+            );
         }
 
-        $patient = Patient::where('user_id', $user->id)
-            ->where('name', $this->child_name)
-            ->first();
+        // 6. GESTIÓN DEL PACIENTE (Hijo/a)
+        $patient = null;
 
+        if ($this->selected_patient_id !== 'new') {
+            // A) Actualizar existente
+            $patient = Patient::find($this->selected_patient_id);
+            if ($patient) {
+                $patient->update([
+                    'name' => $this->child_name,
+                    'birth_date' => $this->child_dob,
+                    'health_insurance_id' => $this->child_insurance_id ?: null,
+                    'affiliate_number' => $this->child_affiliate ?: null,
+                ]);
+            }
+        }
+
+        // B) Crear nuevo si no existe o se eligió 'new'
         if (!$patient) {
             $patient = Patient::create([
                 'user_id' => $user->id,
                 'name' => $this->child_name,
                 'birth_date' => $this->child_dob,
                 'health_insurance_id' => $this->child_insurance_id ?: null,
-                // Agregamos affiliate por si acaso, aunque esté vacío
-                'affiliate_number' => $this->child_affiliate ?? null,
+                'affiliate_number' => $this->child_affiliate ?: null,
             ]);
+            
+            // Si estaba logueado, recargamos la lista para la próxima
+            if(Auth::check()) {
+                $this->existingPatients = Patient::where('user_id', $user->id)->get();
+            }
         }
 
+        // 7. CREAR TURNO
         $startTime = Carbon::parse($this->selectedDate . ' ' . $this->selectedTime);
         $type = AppointmentType::find($this->type_id);
 
@@ -238,7 +287,7 @@ class GuestBooking extends Component
             'start_time' => $startTime,
             'end_time' => $startTime->copy()->addMinutes($type->duration_minutes),
             'status' => 'confirmed',
-            'patient_notes' => 'Turno reservado vía Web Pública',
+            'patient_notes' => 'Reserva Web',
             'created_by' => $user->id,
         ]);
 
@@ -248,6 +297,7 @@ class GuestBooking extends Component
 
     public function render()
     {
-        return view('livewire.guest-booking');
+        $businessName = BusinessSetting::first()->business_name ?? 'Consultorio Médico';
+        return view('livewire.guest-booking', ['businessName' => $businessName]);
     }
 }
