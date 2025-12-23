@@ -38,6 +38,9 @@
                         <x-nav-link :href="route('admin.finance')" :active="request()->routeIs('admin.finance')">
                             {{ __('Caja y Finanzas') }}
                         </x-nav-link>
+                        <x-nav-link :href="route('admin.reminders')" :active="request()->routeIs('admin.reminders')">
+                            {{ __('WhatsApp Recordatorios') }}
+                        </x-nav-link>
                     @else
                         {{-- MENÚ PACIENTE --}}
 
