@@ -3,10 +3,11 @@
 namespace App\Livewire;
 
 use Livewire\Component;
-use Livewire\Attributes\Layout;
 use App\Models\Appointment;
+use App\Models\Patient;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Livewire\Attributes\Layout;
 
 #[Layout('layouts.app')]
 class AdminStats extends Component
@@ -16,31 +17,38 @@ class AdminStats extends Component
 
     public function mount()
     {
-        // Por defecto, el mes actual
+        // Iniciamos con la fecha actual
         $this->month = Carbon::now()->month;
         $this->year = Carbon::now()->year;
     }
 
     public function render()
     {
-        // Filtro de fechas
+        // Definimos el rango de fechas según el filtro seleccionado
         $start = Carbon::createFromDate($this->year, $this->month, 1)->startOfMonth();
         $end = $start->copy()->endOfMonth();
 
-        // 1. Turnos Totales en el periodo
-        $totalAppointments = Appointment::whereBetween('start_time', [$start, $end])
-            ->where('status', '!=', 'cancelled') // Ignoramos cancelados
-            ->count();
-
-        // 2. Ingresos Estimados (Sumamos el precio del TIPO de turno de los turnos completados)
-        // Nota: Esto asume que el precio es el actual. 
-        // En un sistema avanzado, deberías guardar el precio histórico en la tabla appointments.
+        // 1. FACTURACIÓN REAL (Solo turnos 'completed')
+        // Usamos join para sumar el precio desde el tipo de turno
         $income = Appointment::whereBetween('start_time', [$start, $end])
-            ->where('status', 'completed') // Solo lo facturado/realizado
+            ->where('status', 'completed')
             ->join('appointment_types', 'appointments.appointment_type_id', '=', 'appointment_types.id')
             ->sum('appointment_types.price');
 
-        // 3. Pacientes por Obra Social (Gráfico de torta textual)
+        // 2. CANTIDAD DE TURNOS (Totales agendados, excluyendo cancelados)
+        $totalAppointments = Appointment::whereBetween('start_time', [$start, $end])
+            ->where('status', '!=', 'cancelled')
+            ->count();
+
+        // 3. PACIENTES NUEVOS (Registrados en este periodo)
+        $newPatients = Patient::whereBetween('created_at', [$start, $end])->count();
+
+        // 4. TURNOS DE HOY (Dato operativo fijo, no depende del filtro mes/año)
+        $todayAppointments = Appointment::whereDate('start_time', Carbon::today())
+            ->where('status', '!=', 'cancelled')
+            ->count();
+
+        // 5. GRÁFICO: PACIENTES POR OBRA SOCIAL
         $byInsurance = Appointment::whereBetween('start_time', [$start, $end])
             ->where('status', '!=', 'cancelled')
             ->join('patients', 'appointments.patient_id', '=', 'patients.id')
@@ -51,12 +59,26 @@ class AdminStats extends Component
             )
             ->groupBy('health_insurances.name')
             ->orderByDesc('total')
+            ->take(5) // Solo el top 5
+            ->get();
+
+        // 6. GRÁFICO: SERVICIOS MÁS VENDIDOS (Top Treatments)
+        $topServices = Appointment::whereBetween('start_time', [$start, $end])
+            ->where('status', '!=', 'cancelled')
+            ->join('appointment_types', 'appointments.appointment_type_id', '=', 'appointment_types.id')
+            ->select('appointment_types.name', DB::raw('count(*) as total'))
+            ->groupBy('appointment_types.name')
+            ->orderByDesc('total')
+            ->take(5)
             ->get();
 
         return view('livewire.admin-stats', [
-            'totalAppointments' => $totalAppointments,
             'income' => $income,
-            'byInsurance' => $byInsurance
+            'totalAppointments' => $totalAppointments,
+            'newPatients' => $newPatients,
+            'todayAppointments' => $todayAppointments,
+            'byInsurance' => $byInsurance,
+            'topServices' => $topServices
         ]);
     }
 }
