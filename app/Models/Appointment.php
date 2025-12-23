@@ -23,7 +23,10 @@ class Appointment extends Model
         'is_overtime',
         'reminder_sent_at',
         'created_by',
-        'cancelled_by'
+        'cancelled_by',
+        'paid_amount',
+        'payment_method',
+        'payment_date',
     ];
 
     protected $casts = [

@@ -34,6 +34,10 @@
                         <x-nav-link :href="route('admin.settings')" :active="request()->routeIs('admin.settings')">
                             {{ __('Mis Horarios') }}
                         </x-nav-link>
+
+                        <x-nav-link :href="route('admin.finance')" :active="request()->routeIs('admin.finance')">
+                            {{ __('Caja y Finanzas') }}
+                        </x-nav-link>
                     @else
                         {{-- MENÚ PACIENTE --}}
 
@@ -134,15 +138,15 @@
                 </x-responsive-nav-link>
 
                 <x-nav-link href="{{ route('guest.booking') }}" :active="request()->routeIs('guest.booking')">
-    {{ __('Reservar Turno') }}
-</x-nav-link>
+                    {{ __('Reservar Turno') }}
+                </x-nav-link>
 
                 <x-responsive-nav-link :href="route('patient.appointments')" :active="request()->routeIs('patient.appointments')">
                     {{ __('Mis Turnos') }}
                 </x-responsive-nav-link>
                 <x-responsive-nav-link :href="route('patient.documents')" :active="request()->routeIs('patient.documents')">
                     {{ __('Mis Estudios') }}
-                </x-nav-link>
+                    </x-nav-link>
             @endif
         </div>
 

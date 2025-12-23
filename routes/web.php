@@ -24,6 +24,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/servicios', App\Livewire\AdminServices::class)->name('admin.services');
     Route::get('/reportes', App\Livewire\AdminStats::class)->name('admin.stats');
     Route::get('/pacientes', App\Livewire\AdminPatients::class)->name('admin.patients');
+    Route::get('/finanzas', App\Livewire\AdminFinance::class)->name('admin.finance');
 
 
     // === ÁREA PACIENTE ===
