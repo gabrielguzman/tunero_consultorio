@@ -10,7 +10,7 @@
             
             @if(Auth::user()->role === 'admin')
                 <div class="bg-white overflow-hidden shadow-xl sm:rounded-lg">
-                    <livewire:appointments-calendar /> 
+                    <livewire:calendar /> 
                 </div>
 
             @else
