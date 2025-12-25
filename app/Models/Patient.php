@@ -18,7 +18,32 @@ class Patient extends Model
         'birth_date',
         'health_insurance_id',
         'affiliate_number',
-        'medical_alerts'
+        'medical_alerts',
+        // --- NUEVOS CAMPOS ---
+        'sex',
+        'place_of_birth',
+        'blood_type',
+        'height_cm',
+        'current_weight',
+        'vaccination_complete',
+        'allergies',
+        'background_diseases',
+        'current_medication',
+        'pregnancy_type',
+        'birth_type',
+        'gestational_age',
+        'birth_weight',
+        'clinical_history_number',
+        'discharge_date',
+        'is_active',
+        'observations'
+    ];
+
+    protected $casts = [
+        'vaccination_complete' => 'boolean',
+        'is_active' => 'boolean',
+        'discharge_date' => 'date',
+        'birth_date' => 'date',
     ];
 
     // Accessor para mostrar la edad bonita (ej: "5 años")

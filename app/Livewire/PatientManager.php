@@ -15,19 +15,31 @@ class PatientManager extends Component
     public $patients;
     public $insurances;
 
+    // Estado del Modal
     public $isModalOpen = false;
     public $isEditing = false;
+    public $activeTab = 'basic'; // Controla la pestaña activa: basic, health, birth, admin
 
-    // Campos
+    // --- CAMPOS DE LA BASE DE DATOS ---
     public $patient_id;
-    public $name;
-    public $dni; // <--- NUEVO
-    public $birth_date;
-    public $health_insurance_id;
-    public $affiliate_number;
-    public $medical_alerts;
 
-    // PROPIEDAD COMPUTADA: Calcula la edad en vivo para mostrar en el form
+    // 1. Datos Básicos
+    public $name, $dni, $birth_date, $sex, $place_of_birth;
+
+    // 2. Cobertura
+    public $health_insurance_id, $affiliate_number;
+
+    // 3. Salud y Físico
+    public $blood_type, $height_cm, $current_weight, $vaccination_complete = false;
+    public $medical_alerts, $allergies, $background_diseases, $current_medication;
+
+    // 4. Perinatales (Nacimiento)
+    public $pregnancy_type, $birth_type, $gestational_age, $birth_weight;
+
+    // 5. Administrativos
+    public $clinical_history_number, $discharge_date, $is_active = true, $observations;
+
+    // PROPIEDAD COMPUTADA: Edad
     public function getCalculatedAgeProperty()
     {
         if (!$this->birth_date) return '';
@@ -68,18 +80,45 @@ class PatientManager extends Component
     {
         $this->resetForm();
         $this->isEditing = true;
-        
+
         $p = Patient::where('user_id', Auth::id())->find($id);
-        
+
         if ($p) {
             $this->patient_id = $p->id;
+
+            // 1. Básicos
             $this->name = $p->name;
-            $this->dni = $p->dni; // <--- CARGAR DNI
-            $this->birth_date = $p->birth_date;
+            $this->dni = $p->dni;
+            $this->birth_date = $p->birth_date ? $p->birth_date->format('Y-m-d') : null;
+            $this->sex = $p->sex;
+            $this->place_of_birth = $p->place_of_birth;
+
+            // 2. Cobertura
             $this->health_insurance_id = $p->health_insurance_id;
             $this->affiliate_number = $p->affiliate_number;
+
+            // 3. Salud
+            $this->blood_type = $p->blood_type;
+            $this->height_cm = $p->height_cm;
+            $this->current_weight = $p->current_weight;
+            $this->vaccination_complete = (bool)$p->vaccination_complete;
             $this->medical_alerts = $p->medical_alerts;
-            
+            $this->allergies = $p->allergies;
+            $this->background_diseases = $p->background_diseases;
+            $this->current_medication = $p->current_medication;
+
+            // 4. Perinatales
+            $this->pregnancy_type = $p->pregnancy_type;
+            $this->birth_type = $p->birth_type;
+            $this->gestational_age = $p->gestational_age;
+            $this->birth_weight = $p->birth_weight;
+
+            // 5. Admin
+            $this->clinical_history_number = $p->clinical_history_number;
+            $this->discharge_date = $p->discharge_date ? $p->discharge_date->format('Y-m-d') : null;
+            $this->is_active = (bool)$p->is_active;
+            $this->observations = $p->observations;
+
             $this->isModalOpen = true;
         }
     }
@@ -88,11 +127,12 @@ class PatientManager extends Component
     {
         $this->validate([
             'name' => 'required|min:3',
-            'dni' => 'nullable|numeric|digits_between:7,8', // <--- VALIDACIÓN DNI
+            'dni' => 'nullable|numeric|digits_between:7,8',
             'birth_date' => 'required|date|before:today',
             'health_insurance_id' => 'nullable|exists:health_insurances,id',
-            'affiliate_number' => 'nullable|string|max:50',
-            'medical_alerts' => 'nullable|string|max:255',
+            'current_weight' => 'nullable|numeric|min:0|max:200',
+            'height_cm' => 'nullable|integer|min:0|max:250',
+            'birth_weight' => 'nullable|numeric|min:0|max:10',
         ]);
 
         Patient::updateOrCreate(
@@ -100,15 +140,37 @@ class PatientManager extends Component
             [
                 'user_id' => Auth::id(),
                 'name' => $this->name,
-                'dni' => $this->dni, // <--- GUARDAR DNI
+                'dni' => $this->dni,
                 'birth_date' => $this->birth_date,
+                'sex' => $this->sex,
+                'place_of_birth' => $this->place_of_birth,
+
                 'health_insurance_id' => $this->health_insurance_id ?: null,
                 'affiliate_number' => $this->affiliate_number,
-                'medical_alerts' => $this->medical_alerts
+
+                'blood_type' => $this->blood_type,
+                'height_cm' => $this->height_cm,
+                'current_weight' => $this->current_weight,
+                'vaccination_complete' => $this->vaccination_complete,
+
+                'medical_alerts' => $this->medical_alerts,
+                'allergies' => $this->allergies,
+                'background_diseases' => $this->background_diseases,
+                'current_medication' => $this->current_medication,
+
+                'pregnancy_type' => $this->pregnancy_type,
+                'birth_type' => $this->birth_type,
+                'gestational_age' => $this->gestational_age,
+                'birth_weight' => $this->birth_weight,
+
+                'clinical_history_number' => $this->clinical_history_number,
+                'discharge_date' => $this->discharge_date ?: null,
+                'is_active' => $this->is_active,
+                'observations' => $this->observations,
             ]
         );
 
-        session()->flash('message', $this->isEditing ? 'Datos actualizados.' : '¡Hijo/a registrado!');
+        session()->flash('message', $this->isEditing ? 'Datos actualizados correctamente.' : '¡Paciente registrado con éxito!');
         $this->closeModal();
         $this->loadPatients();
     }
@@ -118,7 +180,7 @@ class PatientManager extends Component
         $p = Patient::where('user_id', Auth::id())->find($id);
         if ($p) {
             $p->delete();
-            session()->flash('message', 'Eliminado correctamente.');
+            session()->flash('message', 'Paciente eliminado correctamente.');
             $this->loadPatients();
         }
     }
@@ -131,6 +193,22 @@ class PatientManager extends Component
 
     public function resetForm()
     {
-        $this->reset(['name', 'dni', 'birth_date', 'health_insurance_id', 'affiliate_number', 'medical_alerts', 'patient_id']);
+        $this->reset([
+            'patient_id', 'name', 'dni', 'birth_date', 'sex', 'place_of_birth',
+            'health_insurance_id', 'affiliate_number',
+            'blood_type', 'height_cm', 'current_weight', 'vaccination_complete',
+            'medical_alerts', 'allergies', 'background_diseases', 'current_medication',
+            'pregnancy_type', 'birth_type', 'gestational_age', 'birth_weight',
+            'clinical_history_number', 'discharge_date', 'is_active', 'observations'
+        ]);
+        $this->activeTab = 'basic';
+        $this->is_active = true;
+        $this->vaccination_complete = false;
+    }
+
+    // Cambiar Pestaña
+    public function setTab($tab)
+    {
+        $this->activeTab = $tab;
     }
 }
