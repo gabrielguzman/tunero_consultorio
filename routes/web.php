@@ -4,6 +4,8 @@ use App\Http\Controllers\ProfileController;
 // use App\Livewire\PatientBooking;  <-- BORRAR O COMENTAR ESTO
 use App\Livewire\AdminSettings;  
 use Illuminate\Support\Facades\Route;
+use App\Livewire\DoctorAgenda; 
+use App\Livewire\WaitingRoomTv; // Si vas a usar la TV, agrega esta también
 
 /* --- RUTAS PÚBLICAS (Invitados y Pacientes Logueados) --- */
 
@@ -17,6 +19,8 @@ Route::get('/', function () {
 
 /* --- RUTAS PROTEGIDAS --- */
 Route::middleware(['auth', 'verified'])->group(function () {
+
+    Route::get('/agenda', DoctorAgenda::class)->name('doctor.agenda');
 
     // === ÁREA DOCTORA ===
     Route::get('/dashboard', function () { return view('dashboard'); })->name('dashboard');
@@ -40,4 +44,5 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 });
 
+Route::get('/tv', WaitingRoomTv::class)->name('tv');
 require __DIR__.'/auth.php';

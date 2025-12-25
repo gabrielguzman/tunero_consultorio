@@ -88,22 +88,29 @@ class GuestBooking extends Component
     // Cálculo de Horarios Disponibles
     public function calculateSlots()
     {
+        // 1. Limpiamos las variables para evitar basura anterior
         $this->availableSlots = [];
         $this->selectedTime = null;
 
+        // 2. Si no hay especialidad o fecha, no hacemos nada
         if (!$this->type_id || !$this->selectedDate) return;
 
+        $type = AppointmentType::find($this->type_id);
+        if (!$type) return;
+
+        // 3. Obtenemos configuración del negocio
         $settings = BusinessSetting::first();
         $startHour = $settings ? $settings->start_hour : 9;
         $endHour = $settings ? $settings->end_hour : 17;
         $workWeekends = $settings ? $settings->work_weekends : false;
 
-        $type = AppointmentType::find($this->type_id);
-        if (!$type) return;
-
+        // 4. Analizamos la fecha seleccionada
         $date = Carbon::parse($this->selectedDate);
+
+        // Si es fin de semana y el negocio no trabaja, retornamos vacío
         if (!$workWeekends && $date->isWeekend()) return;
 
+        // 5. Buscamos los turnos ocupados en esa fecha
         $booked = Appointment::whereDate('start_time', $date)
             ->where('status', '!=', 'cancelled')
             ->get()
@@ -111,20 +118,35 @@ class GuestBooking extends Component
                 return Carbon::parse($appointment->start_time)->format('H:i');
             })->toArray();
 
+        // 6. Preparamos el bucle de horarios
         $current = $date->copy()->setHour($startHour)->setMinute(0);
-        $end = $date->copy()->setHour($endHour)->setMinute(0);
+        $end = $date->copy()->setHour($endHour)->setMinute(0); // El límite del día
         $duration = $type->duration_minutes;
+        
+        // Capturamos la hora actual exacta
+        $now = Carbon::now(); 
 
         while ($current->lt($end)) {
             $timeStr = $current->format('H:i');
-            // No mostrar pasado si es hoy
-            if ($date->isToday() && $current->lt(now())) {
-                $current->addMinutes($duration);
-                continue;
+
+            // --- LÓGICA CLAVE PARA EL DÍA DE HOY ---
+            // Si la fecha elegida ES HOY...
+            if ($date->isToday()) {
+                // ... y el horario del turno ($current) ya pasó respecto a AHORA ($now)...
+                if ($current->lt($now)) {
+                    // ... saltamos este horario y probamos el siguiente.
+                    $current->addMinutes($duration);
+                    continue; 
+                }
             }
+            // ---------------------------------------
+
+            // Si el horario NO está en la lista de ocupados, lo agregamos
             if (!in_array($timeStr, $booked)) {
                 $this->availableSlots[] = $timeStr;
             }
+
+            // Avanzamos al siguiente bloque
             $current->addMinutes($duration);
         }
     }
